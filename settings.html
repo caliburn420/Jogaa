@@ -25,10 +25,10 @@
 
         <div id="prefill_alchemy_options" class="prefill-alchemy-section">
             <label class="checkbox_label">
-                <input id="prefill_alchemy_gemini_continuation" type="checkbox">
-                <span>Gemini 3 continuation-only mode</span>
+                <input id="prefill_alchemy_continuation" type="checkbox">
+                <span>Continuation-only mode</span>
             </label>
-            <small>Optional: return only slot values and new continuation at minimum supported thinking, then restore literal prefix text locally. Leave off for the original ordered p0/p1 schema.</small>
+            <small>Optional: use each provider's structured-output style to return only slot values and new continuation, then restore literal prefix text locally. Recognized reasoning models use minimum supported thinking. Leave off for the original fully constrained prefix schema.</small>
             <label class="checkbox_label">
                 <input id="prefill_alchemy_hide" type="checkbox">
                 <span>Hide prefill text in the response</span>

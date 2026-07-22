@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "caliburn23",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "homePage": "https://codeberg.org/caliburn23/SillyTavern-Prefill-Alchemy",
     "auto_update": true
 }

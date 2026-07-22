@@ -165,11 +165,7 @@ function buildPrefixRegex(template, mode) {
     return output + escapePrefixLiteral(template.slice(last));
 }
 
-function isGemini3Model(model) {
-    return /(?:^|\/)gemini-3(?:[.\d]*)(?:-|$)/i.test(String(model ?? ''));
-}
-
-function buildGeminiSchema(prefillText, continuationOnly = false) {
+function buildSegmentedSchema(prefillText, { continuationOnly = false, includePropertyOrdering = false, nativeSchema = false } = {}) {
     const normalized = prefillText.replace(/\r\n?/g, '\n');
     const segments = [];
     const slot = /\[\[([^\]]+?)\]\]/g;
@@ -229,9 +225,20 @@ function buildGeminiSchema(prefillText, continuationOnly = false) {
                 ? 'Fill any template slots, then return only the text that continues the supplied assistant prefix.'
                 : 'Constrain output so it begins with a prefix (prefill-like) and continues with additional content.',
             strict: true,
-            value: { type: 'object', properties, required, propertyOrdering },
+            value: {
+                type: 'object',
+                properties,
+                required,
+                ...(includePropertyOrdering ? { propertyOrdering } : {}),
+                ...(continuationOnly ? { additionalProperties: false } : {}),
+            },
         },
-        rawSchema: null,
+        rawSchema: nativeSchema ? {
+            type: 'object',
+            properties,
+            required,
+            additionalProperties: false,
+        } : null,
         nlToken: '',
         multiField: true,
         continuationOnly,
@@ -241,9 +248,17 @@ function buildGeminiSchema(prefillText, continuationOnly = false) {
 export function buildPrefillAlchemySchema(prefillText, settings, source, model) {
     if (!prefillText || !prefillText.trim()) return null;
     const src = String(source ?? '').toLowerCase();
-    if (src === 'makersuite' || src === 'vertexai') {
-        const continuationOnly = !!settings.geminiContinuationOnly && isGemini3Model(model);
-        return buildGeminiSchema(prefillText, continuationOnly);
+    const isGemini = src === 'makersuite' || src === 'vertexai';
+    const isClaude = src === 'claude' || String(model ?? '').toLowerCase().includes('claude');
+    if (settings.continuationOnly) {
+        return buildSegmentedSchema(prefillText, {
+            continuationOnly: true,
+            includePropertyOrdering: isGemini,
+            nativeSchema: isClaude,
+        });
+    }
+    if (isGemini) {
+        return buildSegmentedSchema(prefillText, { includePropertyOrdering: true });
     }
 
     const mode = patternMode(src, model);

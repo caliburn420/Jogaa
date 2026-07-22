@@ -22,7 +22,7 @@ const settings = {
         custom: true,
     },
     autoDisableForForcedReasoning: false,
-    geminiContinuationOnly: false,
+    continuationOnly: false,
     hide: false,
     minLength: 5,
     newlineToken: '<NL>',
@@ -90,8 +90,8 @@ test('matches fork guidance for Gemini word and regex slots', () => {
     assert.equal(regex.schema.value.properties.p1.description, 'Fill in text matching: re:^x+$');
 });
 
-test('optional Gemini 3 continuation mode returns only slots and continuation', () => {
-    const optional = { ...settings, geminiContinuationOnly: true };
+test('optional continuation mode uses Gemini ordering and returns only slots and continuation', () => {
+    const optional = { ...settings, continuationOnly: true };
     const result = buildPrefillAlchemySchema('A[[opt:B|C]]D', optional, 'makersuite', 'gemini-3.6-flash');
     assert.equal(result.continuationOnly, true);
     assert.deepEqual(result.schema.value.propertyOrdering, ['p0', 'continuation']);
@@ -104,10 +104,47 @@ test('optional Gemini 3 continuation mode returns only slots and continuation', 
     }), 'ABDtail');
 });
 
-test('Gemini 3 continuation mode stays off by default', () => {
+test('continuation mode stays off by default', () => {
     const result = buildPrefillAlchemySchema('Prefix: ', settings, 'makersuite', 'gemini-3.1-pro-preview');
     assert.equal(result.continuationOnly, false);
     assert.deepEqual(result.schema.value.propertyOrdering, ['p0', 'p1']);
+});
+
+test('optional continuation mode uses a strict OpenAI-style schema', () => {
+    const optional = { ...settings, continuationOnly: true };
+    const result = buildPrefillAlchemySchema('A[[opt:B|C]]D', optional, 'openai', 'gpt-5.6');
+    assert.deepEqual(result.schema.value.required, ['p0', 'continuation']);
+    assert.equal(result.schema.value.additionalProperties, false);
+    assert.equal(result.schema.value.propertyOrdering, undefined);
+    assert.equal(result.schema.value.properties.p0.enum[1], 'C');
+    assert.equal(unwrapPrefillAlchemyText('{"p0":"C","continuation":"tail"}', {
+        text: 'A[[opt:B|C]]D',
+        hide: false,
+        nlToken: '',
+        continuationOnly: true,
+    }), 'ACDtail');
+});
+
+test('optional continuation mode builds a closed Claude-compatible schema', () => {
+    const optional = { ...settings, continuationOnly: true };
+    const result = buildPrefillAlchemySchema('Prefix: ', optional, 'claude', 'claude-sonnet-4-6');
+    assert.deepEqual(result.rawSchema.required, ['continuation']);
+    assert.equal(result.rawSchema.additionalProperties, false);
+    assert.equal(result.rawSchema.properties.continuation.type, 'string');
+});
+
+test('optional continuation mode reconstructs Claude strict-tool output', () => {
+    const response = {
+        choices: [{ message: { content: '' } }],
+        content: [{ type: 'tool_use', name: 'prefill_alchemy', input: { continuation: 'tail' } }],
+    };
+    transformNonStreamingResponse(response, {
+        text: 'Prefix: ',
+        hide: false,
+        nlToken: '',
+        continuationOnly: true,
+    });
+    assert.equal(response.choices[0].message.content, 'Prefix: tail');
 });
 
 test('unwraps partial JSON and restores newlines', () => {

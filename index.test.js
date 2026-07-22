@@ -178,9 +178,9 @@ test('keeps the assistant message and supplies the fork Claude fallback while Of
     assert.equal(body._structured_prefill_nl_token_fallback, '<NL>');
 });
 
-test('optional Gemini 3 continuation mode forces minimum reasoning and reconstructs output', async () => {
+test('optional continuation mode forces minimum reasoning for Gemini and reconstructs output', async () => {
     extensionSettings.prefillAlchemy.mode = 'on';
-    extensionSettings.prefillAlchemy.geminiContinuationOnly = true;
+    extensionSettings.prefillAlchemy.continuationOnly = true;
     extensionSettings.prefillAlchemy.hide = false;
     const body = {
         chat_completion_source: 'makersuite',
@@ -207,12 +207,12 @@ test('optional Gemini 3 continuation mode forces minimum reasoning and reconstru
     });
     const data = await response.json();
     assert.equal(data.choices[0].message.content, 'Prefix: tail');
-    extensionSettings.prefillAlchemy.geminiContinuationOnly = false;
+    extensionSettings.prefillAlchemy.continuationOnly = false;
 });
 
 test('default Gemini 3 mode keeps ordered prefix fields and selected reasoning', () => {
     extensionSettings.prefillAlchemy.mode = 'on';
-    extensionSettings.prefillAlchemy.geminiContinuationOnly = false;
+    extensionSettings.prefillAlchemy.continuationOnly = false;
     const body = {
         chat_completion_source: 'makersuite',
         model: 'gemini-3.6-flash',
@@ -228,4 +228,53 @@ test('default Gemini 3 mode keeps ordered prefix fields and selected reasoning',
     assert.equal(body.reasoning_effort, 'high');
     assert.equal(body.include_reasoning, true);
     assert.deepEqual(body.json_schema.value.propertyOrdering, ['p0', 'p1']);
+});
+
+test('optional continuation mode uses Claude strict-tool schema because native unwrapping is value-only', () => {
+    chatCompletionSettings.structured_prefill = 'off';
+    extensionSettings.prefillAlchemy.mode = 'on';
+    extensionSettings.prefillAlchemy.continuationOnly = true;
+    const body = {
+        chat_completion_source: 'claude',
+        model: 'claude-sonnet-4-6',
+        stream: false,
+        reasoning_effort: 'high',
+        include_reasoning: true,
+        messages: [
+            { role: 'user', content: 'Continue.' },
+            { role: 'assistant', content: 'Prefix: ' },
+        ],
+    };
+    handlers.get('request-ready')(body);
+    assert.equal(body.reasoning_effort, 'min');
+    assert.equal(body.include_reasoning, false);
+    assert.equal(body.structured_prefill_schema, undefined);
+    assert.deepEqual(body.json_schema.value.required, ['continuation']);
+    assert.equal(body.json_schema.value.additionalProperties, false);
+    extensionSettings.prefillAlchemy.continuationOnly = false;
+    delete chatCompletionSettings.structured_prefill;
+});
+
+test('optional continuation mode uses strict OpenAI schema and reconstructs output', async () => {
+    extensionSettings.prefillAlchemy.mode = 'on';
+    extensionSettings.prefillAlchemy.continuationOnly = true;
+    const body = request(false);
+    body.reasoning_effort = 'high';
+    body.include_reasoning = true;
+    handlers.get('request-ready')(body);
+    assert.equal(body.reasoning_effort, 'min');
+    assert.equal(body.include_reasoning, false);
+    assert.equal(body.json_schema.value.additionalProperties, false);
+    assert.deepEqual(body.json_schema.value.required, ['continuation']);
+
+    upstreamFactory = () => new Response(JSON.stringify({
+        choices: [{ message: { content: '{"continuation":"tail"}' } }],
+    }), { headers: { 'content-type': 'application/json' } });
+    const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    assert.equal(data.choices[0].message.content, 'Prefix tail');
+    extensionSettings.prefillAlchemy.continuationOnly = false;
 });

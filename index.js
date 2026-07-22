@@ -21,7 +21,7 @@ const defaultSettings = Object.freeze({
     mode: MODES.OFF,
     autoProviders: {},
     autoDisableForForcedReasoning: false,
-    geminiContinuationOnly: false,
+    continuationOnly: false,
     hide: false,
     minLength: 900,
     newlineToken: '<NL>',
@@ -47,6 +47,10 @@ function getSettings() {
         };
     }
     const settings = allSettings[MODULE_NAME];
+    if (settings.continuationOnly === undefined && settings.geminiContinuationOnly !== undefined) {
+        settings.continuationOnly = !!settings.geminiContinuationOnly;
+    }
+    delete settings.geminiContinuationOnly;
     for (const [key, value] of Object.entries(defaultSettings)) {
         if (settings[key] === undefined) settings[key] = structuredClone(value);
     }
@@ -100,7 +104,7 @@ function syncSettingsUi() {
     document.getElementById('prefill_alchemy_min_length').value = String(settings.minLength);
     document.getElementById('prefill_alchemy_newline_token').value = settings.newlineToken;
     document.getElementById('prefill_alchemy_forced_reasoning').checked = settings.autoDisableForForcedReasoning;
-    document.getElementById('prefill_alchemy_gemini_continuation').checked = settings.geminiContinuationOnly;
+    document.getElementById('prefill_alchemy_continuation').checked = settings.continuationOnly;
     document.getElementById('prefill_alchemy_auto').hidden = settings.mode !== MODES.AUTO;
     document.getElementById('prefill_alchemy_options').hidden = settings.mode === MODES.OFF;
 }
@@ -121,8 +125,8 @@ function bindSettingsUi() {
         settings.autoDisableForForcedReasoning = event.target.checked;
         save();
     });
-    document.getElementById('prefill_alchemy_gemini_continuation').addEventListener('change', event => {
-        settings.geminiContinuationOnly = event.target.checked;
+    document.getElementById('prefill_alchemy_continuation').addEventListener('change', event => {
+        settings.continuationOnly = event.target.checked;
         save();
     });
     document.getElementById('prefill_alchemy_min_length').addEventListener('change', event => {
@@ -168,20 +172,24 @@ function onRequestReady(request) {
 
         request.messages.splice(prefill.index, 1);
         const isClaude = source === 'claude' || model.toLowerCase().includes('claude');
-        const isGemini3 = (source === 'makersuite' || source === 'vertexai')
-            && /(?:^|\/)gemini-3(?:[.\d]*)(?:-|$)/i.test(model);
-        if (isGemini3 && settings.geminiContinuationOnly) {
+        const modelId = model.toLowerCase();
+        const minimumReasoningModel = isLikelyForcedReasoning(source, model)
+            || /(?:^|\/)(?:gpt-5|o4)(?:[-./]|$)/.test(modelId)
+            || (source === 'claude' && modelId.includes('claude'));
+        if (settings.continuationOnly && minimumReasoningModel) {
             request.reasoning_effort = 'min';
             request.include_reasoning = false;
         }
-        if (nativeForkSupport && isClaude && result.rawSchema) {
+        if (nativeForkSupport && isClaude && result.rawSchema && !result.continuationOnly) {
             // Exact fork behavior: native Claude output_config.format only.
             request.structured_prefill_schema = result.rawSchema;
             request._structured_prefill_nl_token = result.nlToken;
             delete request.structured_prefill_schema_fallback;
             delete request._structured_prefill_nl_token_fallback;
         } else {
-            // Stock SillyTavern fallback: its regular structured-output path.
+            // Stock SillyTavern fallback and continuation-only Claude path:
+            // use the generic strict schema because the fork's native unwrapping
+            // hardcodes a single `value` field and cannot preserve slot fields.
             request.json_schema = result.schema;
         }
 
