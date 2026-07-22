@@ -162,6 +162,14 @@ function onRequestReady(request) {
 
         request.messages.splice(prefill.index, 1);
         const isClaude = source === 'claude' || model.toLowerCase().includes('claude');
+        const isGemini3 = (source === 'makersuite' || source === 'vertexai')
+            && /(?:^|\/)gemini-3(?:[.\d]*)(?:-|$)/i.test(model);
+        if (isGemini3) {
+            // Native assistant prefill bypasses the reasoning pass. Gemini 3.6 no longer
+            // permits that final model turn, so request the closest supported behavior.
+            request.reasoning_effort = 'min';
+            request.include_reasoning = false;
+        }
         if (nativeForkSupport && isClaude && result.rawSchema) {
             // Exact fork behavior: native Claude output_config.format only.
             request.structured_prefill_schema = result.rawSchema;
@@ -178,6 +186,7 @@ function onRequestReady(request) {
             hide: !!settings.hide,
             nlToken: result.nlToken,
             source,
+            continuationOnly: !!result.continuationOnly,
         };
         return;
     }

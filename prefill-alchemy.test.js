@@ -76,17 +76,43 @@ test('uses Anthropic-safe patterns for Claude through any proxy source', () => {
     assert.equal(pattern.includes('[^\\s]'), true);
 });
 
-test('builds and unwraps Gemini ordered fields', () => {
-    const result = buildPrefillAlchemySchema('A[[opt:B|C]]D', settings, 'makersuite', 'gemini-3.5-pro');
+test('builds and unwraps legacy Gemini ordered fields', () => {
+    const result = buildPrefillAlchemySchema('A[[opt:B|C]]D', settings, 'makersuite', 'gemini-2.5-pro');
     assert.deepEqual(result.schema.value.propertyOrdering, ['p0', 'p1', 'p2', 'p3']);
     assert.equal(unwrapPrefillAlchemyText('{"p0":"A","p1":"B","p2":"D","p3":"tail"}', { text: '', hide: false, nlToken: '' }), 'ABDtail');
 });
 
 test('matches fork guidance for Gemini word and regex slots', () => {
-    const words = buildPrefillAlchemySchema('A [[w:2-4]] B', settings, 'makersuite', 'gemini-3.5-pro');
-    const regex = buildPrefillAlchemySchema('A [[re:^x+$]] B', settings, 'makersuite', 'gemini-3.5-pro');
+    const words = buildPrefillAlchemySchema('A [[w:2-4]] B', settings, 'makersuite', 'gemini-2.5-pro');
+    const regex = buildPrefillAlchemySchema('A [[re:^x+$]] B', settings, 'makersuite', 'gemini-2.5-pro');
     assert.equal(words.schema.value.properties.p1.description, 'Fill in 2-4 words.');
     assert.equal(regex.schema.value.properties.p1.description, 'Fill in text matching: re:^x+$');
+});
+
+test('Gemini 3 returns only slots and continuation, then reconstructs the assistant prefill locally', () => {
+    const result = buildPrefillAlchemySchema('A[[opt:B|C]]D', settings, 'makersuite', 'gemini-3.6-flash');
+    assert.equal(result.continuationOnly, true);
+    assert.deepEqual(result.schema.value.propertyOrdering, ['p0', 'continuation']);
+    assert.equal(result.schema.value.properties.p0.enum[0], 'B');
+    assert.equal(result.schema.value.properties.continuation.description.includes('A[[opt:B|C]]D'), true);
+    assert.equal(unwrapPrefillAlchemyText('{"p0":"B","continuation":"tail"}', {
+        text: 'A[[opt:B|C]]D',
+        hide: false,
+        nlToken: '',
+        continuationOnly: true,
+    }), 'ABDtail');
+});
+
+test('Gemini 3 literal prefill is not repeated in model output', () => {
+    const result = buildPrefillAlchemySchema('Prefix: ', settings, 'makersuite', 'gemini-3.1-pro-preview');
+    assert.deepEqual(result.schema.value.propertyOrdering, ['continuation']);
+    assert.deepEqual(Object.keys(result.schema.value.properties), ['continuation']);
+    assert.equal(unwrapPrefillAlchemyText('{"continuation":"tail"}', {
+        text: 'Prefix: ',
+        hide: false,
+        nlToken: '',
+        continuationOnly: true,
+    }), 'Prefix: tail');
 });
 
 test('unwraps partial JSON and restores newlines', () => {
