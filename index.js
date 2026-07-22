@@ -2,6 +2,8 @@ import {
     buildPrefillAlchemySchema,
     findTrailingAssistantPrefill,
     INCOMPATIBLE_SOURCES,
+    isLikelyForcedReasoning,
+    isUnsupportedModel,
     MODES,
     normalizeMode,
     shouldUsePrefillAlchemy,
@@ -62,6 +64,13 @@ function renderProviderToggles() {
     const container = document.getElementById('prefill_alchemy_providers');
     if (!container) return;
     const settings = getSettings();
+    const normalizedProviders = {};
+    for (const provider of getProviderOptions()) {
+        normalizedProviders[provider.value] = Object.hasOwn(settings.autoProviders, provider.value)
+            ? !!settings.autoProviders[provider.value]
+            : true;
+    }
+    settings.autoProviders = normalizedProviders;
     container.textContent = '';
     for (const provider of getProviderOptions()) {
         if (settings.autoProviders[provider.value] === undefined) settings.autoProviders[provider.value] = true;
@@ -134,31 +143,63 @@ async function addSettingsUi() {
 
 function onRequestReady(request) {
     const settings = getSettings();
+    const context = getContext();
     const source = String(request.chat_completion_source ?? '').toLowerCase();
     const model = String(request.model ?? '');
-    if (request.structured_prefill_schema || request.structured_prefill_schema_fallback) return;
-    if (!shouldUsePrefillAlchemy(settings, source, model, request)) return;
-    const prefill = findTrailingAssistantPrefill(request.messages);
-    if (!prefill) return;
-    const result = buildPrefillAlchemySchema(prefill.text, settings, source, model);
-    if (!result) return;
+    const nativeForkSupport = Object.hasOwn(context.chatCompletionSettings ?? {}, 'structured_prefill')
+        || Boolean(request.structured_prefill_schema_fallback);
+    const forcedReasoning = isLikelyForcedReasoning(source, model);
+    const useAlchemy = shouldUsePrefillAlchemy(settings, source, model, forcedReasoning);
 
-    request.messages.splice(prefill.index, 1);
-    request.json_schema = result.schema;
+    // The fork already converted this request before extension hooks ran.
+    if (request.structured_prefill_schema) return;
 
-    // This fork supports native Claude output_config.format. Stock SillyTavern ignores
-    // these extra fields and uses json_schema as a forced structured-output tool.
-    if (result.rawSchema && (source === 'claude' || model.toLowerCase().includes('claude'))) {
-        request.structured_prefill_schema = result.rawSchema;
-        request._structured_prefill_nl_token = result.nlToken;
+    if (useAlchemy && !request.json_schema && !INCOMPATIBLE_SOURCES.has(source)) {
+        const prefill = findTrailingAssistantPrefill(request.messages);
+        if (!prefill) return;
+        const result = buildPrefillAlchemySchema(prefill.text, settings, source, model);
+        if (!result) return;
+
+        request.messages.splice(prefill.index, 1);
+        const isClaude = source === 'claude' || model.toLowerCase().includes('claude');
+        if (nativeForkSupport && isClaude && result.rawSchema) {
+            // Exact fork behavior: native Claude output_config.format only.
+            request.structured_prefill_schema = result.rawSchema;
+            request._structured_prefill_nl_token = result.nlToken;
+            delete request.structured_prefill_schema_fallback;
+            delete request._structured_prefill_nl_token_fallback;
+        } else {
+            // Stock SillyTavern fallback: its regular structured-output path.
+            request.json_schema = result.schema;
+        }
+
+        request[META_KEY] = {
+            text: prefill.text,
+            hide: !!settings.hide,
+            nlToken: result.nlToken,
+            source,
+        };
+        return;
     }
 
-    request[META_KEY] = {
-        text: prefill.text,
-        hide: !!settings.hide,
-        nlToken: result.nlToken,
-        source,
-    };
+    // Match the fork's native Claude fallback when structured prefill is disabled:
+    // preserve the assistant prefill, but give the backend a schema it can retry with.
+    if (!useAlchemy && source === 'claude' && !request.json_schema && !isUnsupportedModel(model)) {
+        if (request.structured_prefill_schema_fallback) return;
+        const lastIndex = Array.isArray(request.messages) ? request.messages.length - 1 : -1;
+        const message = request.messages?.[lastIndex];
+        if (message?.role !== 'assistant' || typeof message.content !== 'string' || !message.content) return;
+        const result = buildPrefillAlchemySchema(message.content, settings, source, model);
+        if (!result?.rawSchema) return;
+        request.structured_prefill_schema_fallback = result.rawSchema;
+        request._structured_prefill_nl_token_fallback = result.nlToken;
+        request[META_KEY] = {
+            text: message.content,
+            hide: !!settings.hide,
+            nlToken: result.nlToken,
+            source,
+        };
+    }
 }
 
 function getBodyText(input, init) {
@@ -215,6 +256,21 @@ function syntheticTextEvent(source, text) {
     return { choices: [{ delta: { content: text } }] };
 }
 
+function getHiddenStreamingText(raw, meta) {
+    const decoded = unwrapPrefillAlchemyText(raw, { ...meta, hide: false });
+    const template = String(meta.text ?? '').replace(/\r\n?/g, '\n');
+    const keep = /\[\[\s*keep\s*\]\]/i.exec(template);
+    const hiddenTemplate = keep ? template.slice(0, keep.index) : template;
+    const literal = hiddenTemplate.replace(/\[\[[^\]]+?\]\]/g, '');
+    const normalizeQuotes = value => String(value)
+        .replace(/[\u201c\u201d\u201e\u201f\u2033\u2036]/g, '"')
+        .replace(/[\u2018\u2019\u201a\u201b\u2032\u2035]/g, "'");
+    const normalizedText = normalizeQuotes(decoded);
+    const normalizedLiteral = normalizeQuotes(literal);
+    const pending = normalizedLiteral.startsWith(normalizedText) && normalizedText.length < normalizedLiteral.length;
+    return { pending, text: pending ? '' : stripHiddenPrefill(decoded, meta.text) };
+}
+
 function wrapStreamingResponse(response, meta) {
     if (!response.body) return response;
     const reader = response.body.getReader();
@@ -237,7 +293,13 @@ function wrapStreamingResponse(response, meta) {
                 for (const target of textTargets(data, meta.source)) {
                     raw += target.object[target.key];
                     if (meta.hide) {
-                        target.object[target.key] = '';
+                        const hidden = getHiddenStreamingText(raw, meta);
+                        if (hidden.pending) {
+                            target.object[target.key] = '';
+                        } else {
+                            target.object[target.key] = hidden.text.startsWith(clean) ? hidden.text.slice(clean.length) : hidden.text;
+                            clean = hidden.text;
+                        }
                     } else {
                         const next = unwrapPrefillAlchemyText(raw, meta);
                         target.object[target.key] = next.startsWith(clean) ? next.slice(clean.length) : next;
@@ -255,9 +317,10 @@ function wrapStreamingResponse(response, meta) {
     const flushHidden = controller => {
         if (!meta.hide || flushedHidden || !raw) return;
         flushedHidden = true;
-        let finalText = unwrapPrefillAlchemyText(raw, { ...meta, hide: true });
+        let finalText = getHiddenStreamingText(raw, meta).text;
         if (finalText === '' && !raw.trimStart().startsWith('{')) finalText = stripHiddenPrefill(raw, meta.text);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(syntheticTextEvent(meta.source, finalText))}\n\n`));
+        const remaining = finalText.startsWith(clean) ? finalText.slice(clean.length) : finalText;
+        if (remaining) controller.enqueue(encoder.encode(`data: ${JSON.stringify(syntheticTextEvent(meta.source, remaining))}\n\n`));
     };
 
     const stream = new ReadableStream({

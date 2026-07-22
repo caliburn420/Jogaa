@@ -27,26 +27,34 @@ export function isUnsupportedModel(model) {
     return String(model ?? '').toLowerCase().includes('claude-fable');
 }
 
-export function isLikelyForcedReasoning(source, model, request = {}) {
+export function isLikelyForcedReasoning(source, model) {
     const id = String(model ?? '').toLowerCase();
     const src = String(source ?? '').toLowerCase();
-    if (request.reasoning_effort === 'none' || request.reasoning_effort === 'disabled') return false;
-    const providerPrefix = '(?:^|/)';
-    if (new RegExp(`${providerPrefix}(?:gpt-4\\.5|o1|o3)(?:-|$)`).test(id)) return true;
-    if (new RegExp(`${providerPrefix}(?:gemini-2\\.0-flash-thinking-exp|gemini-2\\.0-pro-exp|gemini-2\\.5|gemini-3(?:\\.1)?)(?:-|$)`).test(id)) return true;
-    if (/(?:^|\/)(?:deepseek-r1|qwq)(?:-|$)/.test(id)) return true;
+    const prefixes = [
+        'gpt-4.5',
+        'o1',
+        'o3',
+        'gemini-2.0-flash-thinking-exp',
+        'gemini-2.0-pro-exp',
+        'gemini-2.5',
+        'gemini-3',
+        'gemini-3.1',
+    ];
+    if (prefixes.some(prefix => id.startsWith(prefix) || id.includes(`/${prefix}`))) return true;
     if (src === 'minimax' && id !== 'minimax-m3') return true;
-    return src === 'deepseek' && id.includes('reasoner');
+    return src === 'deepseek' && (id === 'deepseek-reasoner' || id.endsWith('/deepseek-reasoner'));
 }
 
-export function shouldUsePrefillAlchemy(settings, source, model, request = {}) {
+export function shouldUsePrefillAlchemy(settings, source, model, forcedReasoning = null) {
     const mode = normalizeMode(settings.mode);
     const src = String(source ?? '').toLowerCase();
-    if (mode === MODES.OFF || INCOMPATIBLE_SOURCES.has(src) || isUnsupportedModel(model)) return false;
-    if (request.json_schema) return false;
+    if (mode === MODES.OFF) return false;
+    if (isUnsupportedModel(model)) return false;
     if (mode === MODES.ON) return true;
+    if (!Object.hasOwn(settings.autoProviders ?? {}, src)) return false;
     if (settings.autoProviders?.[src] === false) return false;
-    if (settings.autoDisableForForcedReasoning && isLikelyForcedReasoning(src, model, request)) return false;
+    const isForced = forcedReasoning ?? isLikelyForcedReasoning(src, model);
+    if (settings.autoDisableForForcedReasoning && isForced) return false;
     return !String(model ?? '').toLowerCase().includes('claude') || !supportsClaudeNativeAssistantPrefill(model);
 }
 
@@ -83,7 +91,7 @@ function anyCharPattern() {
 function patternMode(source, model) {
     const src = String(source ?? '').toLowerCase();
     const id = String(model ?? '').toLowerCase();
-    return src === 'claude' || src === 'anthropic' || (src === 'openrouter' && (id.startsWith('anthropic/') || id.includes('claude')))
+    return src === 'claude' || src === 'anthropic' || id.includes('claude')
         ? 'anthropic'
         : 'default';
 }
@@ -166,10 +174,19 @@ function buildGeminiSchema(prefillText) {
     while ((match = slot.exec(normalized)) !== null) {
         if (match.index > last) segments.push({ type: 'literal', text: normalized.slice(last, match.index) });
         const body = match[1].trim();
-        const options = /^(?:opt|options)\s*:\s*(.+)$/i.exec(body);
+        const lower = body.toLowerCase();
+        const options = /^(?:opt|options)\s*:\s*(.+?)\s*$/i.exec(body);
         if (/^keep$/i.test(body)) segments.push({ type: 'keep' });
         else if (options) segments.push({ type: 'options', values: options[1].split(/[|,]/).map(x => x.trim()).filter(Boolean) });
-        else segments.push({ type: 'free', description: `Fill in text for [[${body}]].` });
+        else if (/^free$/i.test(lower)) segments.push({ type: 'free' });
+        else if (/^(?:w|words)\s*:/i.test(body)) {
+            const words = /^(?:w|words)\s*:\s*(\d+)(?:\s*-\s*(\d+))?\s*$/i.exec(lower);
+            const min = words ? Number.parseInt(words[1]) : 1;
+            const max = words?.[2] ? Number.parseInt(words[2]) : min;
+            segments.push({ type: 'words', description: `Fill in ${min === max ? min : `${min}-${max}`} words.` });
+        } else if (/^(?:re|regex)\s*:/i.test(body)) {
+            segments.push({ type: 'free', description: `Fill in text matching: ${body}` });
+        } else segments.push({ type: 'free' });
         last = match.index + match[0].length;
     }
     if (last < normalized.length) segments.push({ type: 'literal', text: normalized.slice(last) });
@@ -187,7 +204,9 @@ function buildGeminiSchema(prefillText) {
             ? { type: 'string', enum: [segment.text] }
             : segment.type === 'options'
                 ? { type: 'string', enum: segment.values.length ? segment.values : [''] }
-                : { type: 'string', description: segment.description };
+                : segment.type === 'words'
+                    ? { type: 'string', description: segment.description || 'Fill in the appropriate words.' }
+                    : { type: 'string', description: segment.description || 'Fill in the appropriate text.' };
     }
     const continuation = `p${index}`;
     required.push(continuation);
@@ -196,7 +215,7 @@ function buildGeminiSchema(prefillText) {
     return {
         schema: {
             name: 'prefill_alchemy',
-            description: 'Constrain output so it begins with a prefix and continues with additional content.',
+            description: 'Constrain output so it begins with a prefix (prefill-like) and continues with additional content.',
             strict: true,
             value: { type: 'object', properties, required, propertyOrdering },
         },
@@ -229,10 +248,17 @@ export function buildPrefillAlchemySchema(prefillText, settings, source, model) 
     const escapedToken = escapeRegex(nlToken);
     prefix = prefix.split(escapedToken).join(`(?:${escapedToken}|\\n)`);
     const any = anyCharPattern();
-    const pattern = mode === 'anthropic'
+    let pattern = mode === 'anthropic'
         ? `^(?:${prefix})${any}*[^\\s]${any}*$`
         : `^(?:${prefix})${any}{${minimum},}$`;
-    new RegExp(pattern);
+    try {
+        new RegExp(pattern);
+    } catch (error) {
+        console.warn('Prefill Alchemy: invalid regex pattern, falling back to a safe pattern.', error);
+        pattern = mode === 'anthropic'
+            ? `^(?:${prefix})${any}*[^\\s]${any}*$`
+            : `^(?:${prefix})${any}{${minimum},}$`;
+    }
     const rawSchema = {
         type: 'object',
         properties: {
@@ -248,7 +274,7 @@ export function buildPrefillAlchemySchema(prefillText, settings, source, model) 
     return {
         schema: {
             name: 'prefill_alchemy',
-            description: 'Constrain output so it begins with a prefix and continues with additional content.',
+            description: 'Constrain output so it begins with a prefix (prefill-like) and continues with additional content.',
             strict: true,
             value: rawSchema,
         },
@@ -306,7 +332,8 @@ export function stripHiddenPrefill(text, template) {
 
 export function unwrapPrefillAlchemyText(rawText, meta = {}) {
     if (typeof rawText !== 'string' || !rawText.length) return rawText;
-    const decode = value => meta.nlToken ? value.split(meta.nlToken).join('\n') : value;
+    const nlToken = meta.nlToken || '<NL>';
+    const decode = value => nlToken && value ? value.split(nlToken).join('\n') : value;
     const finish = value => meta.hide ? stripHiddenPrefill(decode(value), meta.text) : decode(value);
     try {
         const parsed = JSON.parse(rawText);
@@ -317,7 +344,7 @@ export function unwrapPrefillAlchemyText(rawText, meta = {}) {
         // Partial JSON is expected while streaming.
     }
     const single = extractJsonStringField(rawText, 'value');
-    if (single !== null) return finish(single);
+    if (typeof single === 'string' && single.length > 0) return finish(single);
     let multi = '';
     for (let i = 0; i < 100; i++) {
         const value = extractJsonStringField(rawText, `p${i}`);
@@ -325,7 +352,23 @@ export function unwrapPrefillAlchemyText(rawText, meta = {}) {
         multi += value;
     }
     if (multi) return finish(multi);
-    return rawText.trimStart().startsWith('{') ? '' : finish(rawText);
+    const trimmed = rawText.trim();
+    if (trimmed.startsWith('{"value":"') || trimmed.startsWith('{ "value"')) {
+        let inner = trimmed;
+        const prefix = /^\{\s*"value"\s*:\s*"/.exec(inner);
+        if (prefix) {
+            inner = inner.slice(prefix[0].length).replace(/"\s*\}\s*$/, '');
+            try {
+                inner = JSON.parse(`"${inner}"`);
+            } catch {
+                inner = inner.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t')
+                    .replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+            }
+            return finish(inner);
+        }
+    }
+    if (trimmed.startsWith('{')) return '';
+    return rawText;
 }
 
 export function transformNonStreamingResponse(data, meta) {

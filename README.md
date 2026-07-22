@@ -18,7 +18,7 @@ If this fork's built-in **Chat Completion > Structured Prefill** control is enab
 
 Supported markers are `[[w:N]]`, `[[w:N-M]]`, `[[opt:a|b]]`, `[[re:pattern]]`, `[[free]]`, and `[[keep]]`.
 
-If **Hide prefill text** is enabled, streamed text is buffered until completion so the hidden prefix never flashes in chat.
+If **Hide prefill text** is enabled, the hidden prefix is withheld and the visible continuation starts streaming as soon as the prefix is complete.
 
 Prefill Alchemy leaves requests that already use a JSON schema unchanged.
 

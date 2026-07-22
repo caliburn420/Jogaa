@@ -3,6 +3,7 @@ import test from 'node:test';
 
 const handlers = new Map();
 const extensionSettings = {};
+const chatCompletionSettings = {};
 let sentBody = null;
 let upstreamFactory = () => new Response('{}', { headers: { 'content-type': 'application/json' } });
 
@@ -14,7 +15,7 @@ globalThis.document = {
 globalThis.SillyTavern = {
     getContext: () => ({
         extensionSettings,
-        chatCompletionSettings: {},
+        chatCompletionSettings,
         saveSettingsDebounced: () => {},
         eventTypes: {
             CHAT_COMPLETION_SETTINGS_READY: 'request-ready',
@@ -109,4 +110,70 @@ test('hidden streaming output is emitted before the DONE marker', async () => {
     assert.ok(visibleIndex >= 0);
     assert.ok(doneIndex > visibleIndex);
     assert.equal(text.includes('"content":"Prefix '), false);
+});
+
+test('hidden output continues streaming after the hidden prefix is complete', async () => {
+    extensionSettings.prefillAlchemy.mode = 'on';
+    extensionSettings.prefillAlchemy.hide = true;
+    const body = request(true);
+    handlers.get('request-ready')(body);
+    const chunks = [
+        JSON.stringify({ choices: [{ delta: { content: '{"value":"Prefix ' } }] }),
+        JSON.stringify({ choices: [{ delta: { content: 'ta' } }] }),
+        JSON.stringify({ choices: [{ delta: { content: 'il"}' } }] }),
+    ];
+    upstreamFactory = () => new Response(`${chunks.map(chunk => `data: ${chunk}\n\n`).join('')}data: [DONE]\n\n`, {
+        headers: { 'content-type': 'text/event-stream' },
+    });
+
+    const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+    const visibleChunks = (await response.text()).split(/\n/)
+        .filter(line => line.startsWith('data: {'))
+        .map(line => JSON.parse(line.slice(5)).choices?.[0]?.delta?.content ?? '')
+        .filter(Boolean);
+    assert.deepEqual(visibleChunks, ['ta', 'il']);
+});
+
+test('uses only the fork native schema for Claude and replaces a passive fallback', () => {
+    chatCompletionSettings.structured_prefill = 'off';
+    extensionSettings.prefillAlchemy.mode = 'on';
+    extensionSettings.prefillAlchemy.hide = false;
+    const body = {
+        chat_completion_source: 'claude',
+        model: 'claude-sonnet-4-6',
+        stream: false,
+        messages: [
+            { role: 'user', content: 'Continue.' },
+            { role: 'assistant', content: 'Prefix ' },
+        ],
+        structured_prefill_schema_fallback: { type: 'object' },
+        _structured_prefill_nl_token_fallback: '<NL>',
+    };
+    handlers.get('request-ready')(body);
+    assert.equal(body.messages.length, 1);
+    assert.equal(body.json_schema, undefined);
+    assert.equal(body.structured_prefill_schema?.properties?.value?.type, 'string');
+    assert.equal(body.structured_prefill_schema_fallback, undefined);
+    assert.equal(body._structured_prefill_nl_token_fallback, undefined);
+    delete chatCompletionSettings.structured_prefill;
+});
+
+test('keeps the assistant message and supplies the fork Claude fallback while Off', () => {
+    extensionSettings.prefillAlchemy.mode = 'off';
+    const body = {
+        chat_completion_source: 'claude',
+        model: 'claude-sonnet-4-6',
+        stream: false,
+        messages: [
+            { role: 'user', content: 'Continue.' },
+            { role: 'assistant', content: 'Prefix ' },
+        ],
+    };
+    handlers.get('request-ready')(body);
+    assert.equal(body.messages.length, 2);
+    assert.equal(body.structured_prefill_schema_fallback?.properties?.value?.type, 'string');
+    assert.equal(body._structured_prefill_nl_token_fallback, '<NL>');
 });
