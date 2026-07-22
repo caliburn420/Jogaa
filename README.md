@@ -20,7 +20,7 @@ Supported markers are `[[w:N]]`, `[[w:N-M]]`, `[[opt:a|b]]`, `[[re:pattern]]`, `
 
 If **Hide prefill text** is enabled, the hidden prefix is withheld and the visible continuation starts streaming as soon as the prefix is complete.
 
-**Continuation-only mode** is optional and defaults off. When enabled, compatible providers return only template slot values and new continuation text using their own structured-output transport; Prefill Alchemy restores literal prefix text locally. Recognized reasoning models request their minimum supported effort. Leave it disabled to retain the original fully constrained prefix behavior.
+**Continuation-only mode** is optional and defaults off. When enabled, compatible providers return only template slot values and new continuation text using their own structured-output transport; Prefill Alchemy restores literal prefix text locally and preserves your selected reasoning settings. Leave it disabled to retain the original fully constrained prefix behavior.
 
 Prefill Alchemy leaves requests that already use a JSON schema unchanged.
 

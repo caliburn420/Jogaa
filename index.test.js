@@ -178,7 +178,7 @@ test('keeps the assistant message and supplies the fork Claude fallback while Of
     assert.equal(body._structured_prefill_nl_token_fallback, '<NL>');
 });
 
-test('optional continuation mode forces minimum reasoning for Gemini and reconstructs output', async () => {
+test('optional continuation mode preserves Gemini reasoning and reconstructs output', async () => {
     extensionSettings.prefillAlchemy.mode = 'on';
     extensionSettings.prefillAlchemy.continuationOnly = true;
     extensionSettings.prefillAlchemy.hide = false;
@@ -194,8 +194,8 @@ test('optional continuation mode forces minimum reasoning for Gemini and reconst
         ],
     };
     handlers.get('request-ready')(body);
-    assert.equal(body.reasoning_effort, 'min');
-    assert.equal(body.include_reasoning, false);
+    assert.equal(body.reasoning_effort, 'high');
+    assert.equal(body.include_reasoning, true);
     assert.deepEqual(body.json_schema.value.propertyOrdering, ['continuation']);
 
     upstreamFactory = () => new Response(JSON.stringify({
@@ -246,8 +246,8 @@ test('optional continuation mode uses Claude strict-tool schema because native u
         ],
     };
     handlers.get('request-ready')(body);
-    assert.equal(body.reasoning_effort, 'min');
-    assert.equal(body.include_reasoning, false);
+    assert.equal(body.reasoning_effort, 'high');
+    assert.equal(body.include_reasoning, true);
     assert.equal(body.structured_prefill_schema, undefined);
     assert.deepEqual(body.json_schema.value.required, ['continuation']);
     assert.equal(body.json_schema.value.additionalProperties, false);
@@ -262,8 +262,8 @@ test('optional continuation mode uses strict OpenAI schema and reconstructs outp
     body.reasoning_effort = 'high';
     body.include_reasoning = true;
     handlers.get('request-ready')(body);
-    assert.equal(body.reasoning_effort, 'min');
-    assert.equal(body.include_reasoning, false);
+    assert.equal(body.reasoning_effort, 'high');
+    assert.equal(body.include_reasoning, true);
     assert.equal(body.json_schema.value.additionalProperties, false);
     assert.deepEqual(body.json_schema.value.required, ['continuation']);
 

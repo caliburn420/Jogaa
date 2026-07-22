@@ -172,14 +172,6 @@ function onRequestReady(request) {
 
         request.messages.splice(prefill.index, 1);
         const isClaude = source === 'claude' || model.toLowerCase().includes('claude');
-        const modelId = model.toLowerCase();
-        const minimumReasoningModel = isLikelyForcedReasoning(source, model)
-            || /(?:^|\/)(?:gpt-5|o4)(?:[-./]|$)/.test(modelId)
-            || (source === 'claude' && modelId.includes('claude'));
-        if (settings.continuationOnly && minimumReasoningModel) {
-            request.reasoning_effort = 'min';
-            request.include_reasoning = false;
-        }
         if (nativeForkSupport && isClaude && result.rawSchema && !result.continuationOnly) {
             // Exact fork behavior: native Claude output_config.format only.
             request.structured_prefill_schema = result.rawSchema;
