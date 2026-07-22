@@ -1,0 +1,11 @@
+{
+    "name": "sillytavern-prefill-alchemy",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "license": "AGPL-3.0-or-later",
+    "scripts": {
+        "test": "node --test prefill-alchemy.test.js index.test.js",
+        "check": "node --check prefill-alchemy.js && node --check index.js"
+    }
+}

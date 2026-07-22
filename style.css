@@ -1,0 +1,24 @@
+.prefill-alchemy .inline-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.prefill-alchemy-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.prefill-alchemy-providers {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.25rem 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.prefill-alchemy-help {
+    line-height: 1.6;
+    margin-top: 0.4rem;
+}

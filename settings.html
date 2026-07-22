@@ -1,0 +1,46 @@
+<div id="prefill_alchemy" class="prefill-alchemy inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+        <b><i class="fa-solid fa-brackets-curly"></i> Prefill Alchemy</b>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+    </div>
+    <div class="inline-drawer-content">
+        <label for="prefill_alchemy_mode">Mode</label>
+        <select id="prefill_alchemy_mode" class="text_pole">
+            <option value="off">Off</option>
+            <option value="auto">Auto</option>
+            <option value="on">On</option>
+        </select>
+        <small>Uses the trailing assistant message as a schema-constrained prefix. Auto keeps native prefill for Claude models older than 4.6.</small>
+
+        <div id="prefill_alchemy_auto" class="prefill-alchemy-section">
+            <label class="checkbox_label">
+                <input id="prefill_alchemy_forced_reasoning" type="checkbox">
+                <span>Skip known forced-reasoning models in Auto mode</span>
+            </label>
+            <details>
+                <summary>Auto providers</summary>
+                <div id="prefill_alchemy_providers" class="prefill-alchemy-providers"></div>
+            </details>
+        </div>
+
+        <div id="prefill_alchemy_options" class="prefill-alchemy-section">
+            <label class="checkbox_label">
+                <input id="prefill_alchemy_hide" type="checkbox">
+                <span>Hide prefill text in the response</span>
+            </label>
+            <small>Put <code>[[keep]]</code> where visible text should begin.</small>
+            <label for="prefill_alchemy_min_length">Minimum continuation length</label>
+            <input id="prefill_alchemy_min_length" type="number" class="text_pole" min="1" max="10000" step="100">
+            <label for="prefill_alchemy_newline_token">Newline token</label>
+            <input id="prefill_alchemy_newline_token" type="text" class="text_pole">
+            <details>
+                <summary>Template markers</summary>
+                <div class="prefill-alchemy-help">
+                    <code>[[w:3]]</code> three words; <code>[[w:2-5]]</code> a word range;<br>
+                    <code>[[opt:yes|no]]</code> one option; <code>[[re:...]]</code> regex;<br>
+                    <code>[[free]]</code> free text; <code>[[keep]]</code> visible-text boundary.
+                </div>
+            </details>
+        </div>
+    </div>
+</div>
