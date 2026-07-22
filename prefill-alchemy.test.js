@@ -22,6 +22,7 @@ const settings = {
         custom: true,
     },
     autoDisableForForcedReasoning: false,
+    geminiContinuationOnly: false,
     hide: false,
     minLength: 5,
     newlineToken: '<NL>',
@@ -87,6 +88,26 @@ test('matches fork guidance for Gemini word and regex slots', () => {
     const regex = buildPrefillAlchemySchema('A [[re:^x+$]] B', settings, 'makersuite', 'gemini-3.5-pro');
     assert.equal(words.schema.value.properties.p1.description, 'Fill in 2-4 words.');
     assert.equal(regex.schema.value.properties.p1.description, 'Fill in text matching: re:^x+$');
+});
+
+test('optional Gemini 3 continuation mode returns only slots and continuation', () => {
+    const optional = { ...settings, geminiContinuationOnly: true };
+    const result = buildPrefillAlchemySchema('A[[opt:B|C]]D', optional, 'makersuite', 'gemini-3.6-flash');
+    assert.equal(result.continuationOnly, true);
+    assert.deepEqual(result.schema.value.propertyOrdering, ['p0', 'continuation']);
+    assert.equal(result.schema.value.properties.p0.enum[0], 'B');
+    assert.equal(unwrapPrefillAlchemyText('{"p0":"B","continuation":"tail"}', {
+        text: 'A[[opt:B|C]]D',
+        hide: false,
+        nlToken: '',
+        continuationOnly: true,
+    }), 'ABDtail');
+});
+
+test('Gemini 3 continuation mode stays off by default', () => {
+    const result = buildPrefillAlchemySchema('Prefix: ', settings, 'makersuite', 'gemini-3.1-pro-preview');
+    assert.equal(result.continuationOnly, false);
+    assert.deepEqual(result.schema.value.propertyOrdering, ['p0', 'p1']);
 });
 
 test('unwraps partial JSON and restores newlines', () => {

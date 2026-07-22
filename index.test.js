@@ -177,3 +177,55 @@ test('keeps the assistant message and supplies the fork Claude fallback while Of
     assert.equal(body.structured_prefill_schema_fallback?.properties?.value?.type, 'string');
     assert.equal(body._structured_prefill_nl_token_fallback, '<NL>');
 });
+
+test('optional Gemini 3 continuation mode forces minimum reasoning and reconstructs output', async () => {
+    extensionSettings.prefillAlchemy.mode = 'on';
+    extensionSettings.prefillAlchemy.geminiContinuationOnly = true;
+    extensionSettings.prefillAlchemy.hide = false;
+    const body = {
+        chat_completion_source: 'makersuite',
+        model: 'gemini-3.6-flash',
+        stream: false,
+        reasoning_effort: 'high',
+        include_reasoning: true,
+        messages: [
+            { role: 'user', content: 'Continue.' },
+            { role: 'assistant', content: 'Prefix: ' },
+        ],
+    };
+    handlers.get('request-ready')(body);
+    assert.equal(body.reasoning_effort, 'min');
+    assert.equal(body.include_reasoning, false);
+    assert.deepEqual(body.json_schema.value.propertyOrdering, ['continuation']);
+
+    upstreamFactory = () => new Response(JSON.stringify({
+        choices: [{ message: { content: '{"continuation":"tail"}' } }],
+    }), { headers: { 'content-type': 'application/json' } });
+    const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    assert.equal(data.choices[0].message.content, 'Prefix: tail');
+    extensionSettings.prefillAlchemy.geminiContinuationOnly = false;
+});
+
+test('default Gemini 3 mode keeps ordered prefix fields and selected reasoning', () => {
+    extensionSettings.prefillAlchemy.mode = 'on';
+    extensionSettings.prefillAlchemy.geminiContinuationOnly = false;
+    const body = {
+        chat_completion_source: 'makersuite',
+        model: 'gemini-3.6-flash',
+        stream: false,
+        reasoning_effort: 'high',
+        include_reasoning: true,
+        messages: [
+            { role: 'user', content: 'Continue.' },
+            { role: 'assistant', content: 'Prefix: ' },
+        ],
+    };
+    handlers.get('request-ready')(body);
+    assert.equal(body.reasoning_effort, 'high');
+    assert.equal(body.include_reasoning, true);
+    assert.deepEqual(body.json_schema.value.propertyOrdering, ['p0', 'p1']);
+});

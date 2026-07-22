@@ -21,6 +21,7 @@ const defaultSettings = Object.freeze({
     mode: MODES.OFF,
     autoProviders: {},
     autoDisableForForcedReasoning: false,
+    geminiContinuationOnly: false,
     hide: false,
     minLength: 900,
     newlineToken: '<NL>',
@@ -99,6 +100,7 @@ function syncSettingsUi() {
     document.getElementById('prefill_alchemy_min_length').value = String(settings.minLength);
     document.getElementById('prefill_alchemy_newline_token').value = settings.newlineToken;
     document.getElementById('prefill_alchemy_forced_reasoning').checked = settings.autoDisableForForcedReasoning;
+    document.getElementById('prefill_alchemy_gemini_continuation').checked = settings.geminiContinuationOnly;
     document.getElementById('prefill_alchemy_auto').hidden = settings.mode !== MODES.AUTO;
     document.getElementById('prefill_alchemy_options').hidden = settings.mode === MODES.OFF;
 }
@@ -117,6 +119,10 @@ function bindSettingsUi() {
     });
     document.getElementById('prefill_alchemy_forced_reasoning').addEventListener('change', event => {
         settings.autoDisableForForcedReasoning = event.target.checked;
+        save();
+    });
+    document.getElementById('prefill_alchemy_gemini_continuation').addEventListener('change', event => {
+        settings.geminiContinuationOnly = event.target.checked;
         save();
     });
     document.getElementById('prefill_alchemy_min_length').addEventListener('change', event => {
@@ -162,6 +168,12 @@ function onRequestReady(request) {
 
         request.messages.splice(prefill.index, 1);
         const isClaude = source === 'claude' || model.toLowerCase().includes('claude');
+        const isGemini3 = (source === 'makersuite' || source === 'vertexai')
+            && /(?:^|\/)gemini-3(?:[.\d]*)(?:-|$)/i.test(model);
+        if (isGemini3 && settings.geminiContinuationOnly) {
+            request.reasoning_effort = 'min';
+            request.include_reasoning = false;
+        }
         if (nativeForkSupport && isClaude && result.rawSchema) {
             // Exact fork behavior: native Claude output_config.format only.
             request.structured_prefill_schema = result.rawSchema;
@@ -178,6 +190,7 @@ function onRequestReady(request) {
             hide: !!settings.hide,
             nlToken: result.nlToken,
             source,
+            continuationOnly: !!result.continuationOnly,
         };
         return;
     }

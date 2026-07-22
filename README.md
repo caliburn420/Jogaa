@@ -20,6 +20,8 @@ Supported markers are `[[w:N]]`, `[[w:N-M]]`, `[[opt:a|b]]`, `[[re:pattern]]`, `
 
 If **Hide prefill text** is enabled, the hidden prefix is withheld and the visible continuation starts streaming as soon as the prefix is complete.
 
+**Gemini 3 continuation-only mode** is optional and defaults off. When enabled, Gemini returns only template slot values and new continuation text at the minimum supported thinking level; Prefill Alchemy restores literal prefix text locally. Leave it disabled to retain the original ordered `p0`, `p1`, and later fields.
+
 Prefill Alchemy leaves requests that already use a JSON schema unchanged.
 
 ## How it works
