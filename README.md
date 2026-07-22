@@ -10,7 +10,7 @@ For a manual installation, copy this folder into `public/scripts/extensions/thir
 
 ## Use
 
-1. Open **Extensions > Prefill Alchemy** and select Auto or On. On Gemini 3, Prefill Alchemy requests only the new continuation at the lowest supported thinking level and restores the assistant prefix locally, avoiding a prohibited final model turn.
+1. Open **Extensions > Prefill Alchemy** and select Auto or On.
 2. Add an enabled, in-chat assistant injection at the end of the Prompt Manager order.
 3. Generate normally.
 

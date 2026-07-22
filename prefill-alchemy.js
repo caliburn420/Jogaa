@@ -165,11 +165,7 @@ function buildPrefixRegex(template, mode) {
     return output + escapePrefixLiteral(template.slice(last));
 }
 
-function isGemini3Model(model) {
-    return /(?:^|\/)gemini-3(?:[.\d]*)(?:-|$)/i.test(String(model ?? ''));
-}
-
-function buildGeminiSchema(prefillText, continuationOnly = false) {
+function buildGeminiSchema(prefillText) {
     const normalized = prefillText.replace(/\r\n?/g, '\n');
     const segments = [];
     const slot = /\[\[([^\]]+?)\]\]/g;
@@ -200,7 +196,7 @@ function buildGeminiSchema(prefillText, continuationOnly = false) {
     const propertyOrdering = [];
     let index = 0;
     for (const segment of segments) {
-        if (segment.type === 'keep' || (continuationOnly && segment.type === 'literal')) continue;
+        if (segment.type === 'keep') continue;
         const name = `p${index++}`;
         required.push(name);
         propertyOrdering.push(name);
@@ -212,36 +208,27 @@ function buildGeminiSchema(prefillText, continuationOnly = false) {
                     ? { type: 'string', description: segment.description || 'Fill in the appropriate words.' }
                     : { type: 'string', description: segment.description || 'Fill in the appropriate text.' };
     }
-    const continuation = continuationOnly ? 'continuation' : `p${index}`;
+    const continuation = `p${index}`;
     required.push(continuation);
     propertyOrdering.push(continuation);
-    const cleanTemplate = normalized.replace(/\[\[\s*keep\s*\]\]/gi, '');
-    properties[continuation] = {
-        type: 'string',
-        description: continuationOnly
-            ? `Continue the assistant response immediately after this prefix template: ${JSON.stringify(cleanTemplate)}. Return only new continuation text; do not repeat the literal prefix.`
-            : 'Continue the response naturally after the prefix.',
-    };
+    properties[continuation] = { type: 'string', description: 'Continue the response naturally after the prefix.' };
     return {
         schema: {
             name: 'prefill_alchemy',
-            description: continuationOnly
-                ? 'Fill any template slots, then return only the text that continues the supplied assistant prefix.'
-                : 'Constrain output so it begins with a prefix (prefill-like) and continues with additional content.',
+            description: 'Constrain output so it begins with a prefix (prefill-like) and continues with additional content.',
             strict: true,
             value: { type: 'object', properties, required, propertyOrdering },
         },
         rawSchema: null,
         nlToken: '',
         multiField: true,
-        continuationOnly,
     };
 }
 
 export function buildPrefillAlchemySchema(prefillText, settings, source, model) {
     if (!prefillText || !prefillText.trim()) return null;
     const src = String(source ?? '').toLowerCase();
-    if (src === 'makersuite' || src === 'vertexai') return buildGeminiSchema(prefillText, isGemini3Model(model));
+    if (src === 'makersuite' || src === 'vertexai') return buildGeminiSchema(prefillText);
 
     const mode = patternMode(src, model);
     const minimum = Math.max(1, Math.min(10000, Number(settings.minLength) || 900));
@@ -343,16 +330,6 @@ export function stripHiddenPrefill(text, template) {
     return normalized;
 }
 
-function reconstructGeminiContinuation(template, fields) {
-    let index = 0;
-    const prefix = String(template ?? '').replace(/\r\n?/g, '\n').replace(/\[\[([^\]]+?)\]\]/g, (_match, body) => {
-        if (/^\s*keep\s*$/i.test(body)) return '';
-        const value = fields[`p${index++}`];
-        return typeof value === 'string' ? value : '';
-    });
-    return prefix + (typeof fields.continuation === 'string' ? fields.continuation : '');
-}
-
 export function unwrapPrefillAlchemyText(rawText, meta = {}) {
     if (typeof rawText !== 'string' || !rawText.length) return rawText;
     const nlToken = meta.nlToken || '<NL>';
@@ -360,9 +337,6 @@ export function unwrapPrefillAlchemyText(rawText, meta = {}) {
     const finish = value => meta.hide ? stripHiddenPrefill(decode(value), meta.text) : decode(value);
     try {
         const parsed = JSON.parse(rawText);
-        if (meta.continuationOnly && parsed && typeof parsed === 'object') {
-            return finish(reconstructGeminiContinuation(meta.text, parsed));
-        }
         if (typeof parsed?.value === 'string') return finish(parsed.value);
         const keys = Object.keys(parsed ?? {}).filter(key => /^p\d+$/.test(key)).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
         if (keys.length) return finish(keys.map(key => typeof parsed[key] === 'string' ? parsed[key] : '').join(''));
@@ -371,22 +345,6 @@ export function unwrapPrefillAlchemyText(rawText, meta = {}) {
     }
     const single = extractJsonStringField(rawText, 'value');
     if (typeof single === 'string' && single.length > 0) return finish(single);
-    if (meta.continuationOnly) {
-        const fields = {};
-        let hasField = false;
-        for (let i = 0; i < 100; i++) {
-            const value = extractJsonStringField(rawText, `p${i}`);
-            if (value === null) break;
-            fields[`p${i}`] = value;
-            hasField = true;
-        }
-        const continuation = extractJsonStringField(rawText, 'continuation');
-        if (continuation !== null) {
-            fields.continuation = continuation;
-            hasField = true;
-        }
-        if (hasField) return finish(reconstructGeminiContinuation(meta.text, fields));
-    }
     let multi = '';
     for (let i = 0; i < 100; i++) {
         const value = extractJsonStringField(rawText, `p${i}`);
